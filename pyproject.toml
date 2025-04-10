@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "autocrop"
+version = "0.1.0"
+description = ""
+authors = ["Mathieu Leplatre <mathieu@mozilla.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+opencv-python = "^4.11.0.86"
+pillow = "^11.1.0"
+rembg = "^2.0.65"
+onnxruntime = "^1.21.0"
+torch = "^2.6.0"
+torchvision = "^0.21.0"
+matplotlib = "^3.10.1"
+segment-anything = {git = "https://github.com/facebookresearch/segment-anything.git"}
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
