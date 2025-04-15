@@ -9,26 +9,7 @@ from PIL import Image
 INPUT_IMAGE_DIR = sys.argv[1]
 INPUT_JSON_DIR = sys.argv[2]
 OUTPUT_DIR = sys.argv[3]
-GROW_PIXELS = 20  # How much to grow the polygon outward
-
-
-def grow_polygon_mask(image_shape, polygon, grow_pixels):
-    # Create initial mask
-    mask = np.zeros(image_shape[:2], dtype=np.uint8)
-    cv2.fillPoly(mask, [np.array(polygon, dtype=np.int32)], 255)
-
-    # Create structuring element and dilate
-    kernel_size = grow_pixels * 2 + 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    dilated = cv2.dilate(mask, kernel, iterations=1)
-
-    # Get new contour from the dilated mask
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        largest_contour = max(contours, key=cv2.contourArea)
-        return largest_contour
-    else:
-        return np.array(polygon, dtype=np.int32)  # fallback
+FEATHER_SIZE = 7  # Feather size in pixels
 
 
 def extract_sticker(image_path, polygons, output_folder, base_name):
@@ -36,25 +17,34 @@ def extract_sticker(image_path, polygons, output_folder, base_name):
     image_rgba = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGBA)
 
     for sticker in polygons:
-        original_poly = sticker["polygon"]
+        out_path = output_folder / f"{base_name}_{sticker['sticker_id']}.png"
+        if out_path.exists():
+            continue
 
-        # Grow the polygon
-        grown_contour = grow_polygon_mask(image_rgba.shape, original_poly, GROW_PIXELS)
+        polygon = np.array(sticker["polygon"], dtype=np.int32)
 
-        # Create new mask
+        # Create mask from original polygon
         mask = np.zeros(image_rgba.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(mask, [grown_contour], 255)
+        cv2.fillPoly(mask, [polygon], 255)
 
-        # Apply mask
+        # Apply feathering to the mask
+        if FEATHER_SIZE > 0:
+            # Blur the mask to create feathered edges
+            mask_feathered = cv2.GaussianBlur(
+                mask, (FEATHER_SIZE * 2 + 1, FEATHER_SIZE * 2 + 1), 0
+            )
+        else:
+            mask_feathered = mask
+
+        # Apply mask to alpha channel
         sticker_rgba = image_rgba.copy()
-        sticker_rgba[:, :, 3] = mask
+        sticker_rgba[:, :, 3] = mask_feathered
 
         # Crop bounding box
-        x, y, w, h = cv2.boundingRect(grown_contour)
+        x, y, w, h = cv2.boundingRect(polygon)
         cropped = sticker_rgba[y : y + h, x : x + w]
 
         # Save
-        out_path = output_folder / f"{base_name}_{sticker['sticker_id']}.png"
         Image.fromarray(cropped).save(out_path)
         print(f"Saved: {out_path.name}")
 
@@ -66,8 +56,7 @@ def process_folder():
     output_path.mkdir(parents=True, exist_ok=True)
 
     for json_file in input_jsons.glob("*.json"):
-        base_name = json_file.stem.replace("_polygons", "")
-        image_path = input_images / f"{base_name}.jpeg"
+        image_path = input_images / f"{json_file.stem}.jpeg"
 
         if not image_path.exists():
             print(f"Image not found for {json_file.name}, skipping...")
@@ -76,7 +65,7 @@ def process_folder():
         with open(json_file) as f:
             polygons = json.load(f)
 
-        extract_sticker(image_path, polygons, output_path, base_name)
+        extract_sticker(image_path, polygons, output_path, json_file.stem)
 
 
 if __name__ == "__main__":

@@ -5,8 +5,6 @@ import numpy as np
 import torch
 import json
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from pathlib import Path
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 
@@ -17,9 +15,11 @@ OUTPUT_DIR = Path(sys.argv[2])
 MODEL_TYPE = "vit_h"
 CHECKPOINT_PATH = "sam_vit_h_4b8939.pth"
 MODEL_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
-MAX_EDGES = 100
-GROW_MARGIN = 40  # 40 pixels radius: tune as needed
-MIN_AREA = 60000  # Adjust based on image resolution
+MAX_EDGES = 1000
+GROW_MARGIN = 30  # pixels radius: tune as needed
+MIN_AREA = 0.01  # percent
+MAX_AREA = 0.5  # percent
+MAX_STICKERS_PER_SHEET = 30
 
 
 # --- Download SAM model if not present ---
@@ -37,47 +37,30 @@ def download_checkpoint_if_missing(path, url):
         print("Checkpoint already exists.")
 
 
-# --- Visualize masks as polygons on image ---
-def visualize_masks(image, polygons, save_path):
-    fig, ax = plt.subplots(figsize=(10, 12))
-    ax.imshow(image)
-    for poly in polygons:
-        pts = np.array(poly["polygon"])
-        patch = patches.Polygon(
-            pts, closed=True, edgecolor="lime", facecolor="none", linewidth=2
-        )
-        ax.add_patch(patch)
-        ax.text(pts[0][0], pts[0][1], poly["sticker_id"], color="yellow", fontsize=8)
-    ax.axis("off")
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=200)
-    plt.close()
-    print(f"Saved visualization to {save_path}")
-
-
 # --- Main processing function ---
-def process_image(image_path, checkpoint_path, model_type):
+def process_image(image_path, json_path):
     print("Process", image_path)
     # Load image
     image_bgr = cv2.imread(image_path)
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
     # Download model if missing
-    download_checkpoint_if_missing(checkpoint_path, MODEL_URL)
+    download_checkpoint_if_missing(CHECKPOINT_PATH, MODEL_URL)
 
     # Load SAM model
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    sam = sam_model_registry[model_type](checkpoint=checkpoint_path).to(device)
+    sam = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH).to(device)
     mask_generator = SamAutomaticMaskGenerator(sam)
 
     # Generate masks
     masks = mask_generator.generate(image_rgb)
 
-    # Filter masks by area
-    filtered_masks = [m for m in masks if m["area"] > MIN_AREA]
+    image_area = image_rgb.shape[0] * image_rgb.shape[1]
+    min_area = MIN_AREA * image_area
+    max_area = MAX_AREA * image_area
 
     # Sort by area (largest first)
-    filtered_masks.sort(key=lambda m: m["area"], reverse=True)
+    masks.sort(key=lambda m: m["area"], reverse=True)
 
     # Deduplicate overlapping masks using IoU
     def iou(mask1, mask2):
@@ -86,10 +69,14 @@ def process_image(image_path, checkpoint_path, model_type):
         return intersection / union if union > 0 else 0
 
     final_masks = []
-    for m in filtered_masks:
+    for m in masks:
+        if m["area"] > max_area:
+            continue
+        if m["area"] < min_area:
+            break
         if all(iou(m["segmentation"], f["segmentation"]) < 0.5 for f in final_masks):
             final_masks.append(m)
-        if len(final_masks) >= 12:  # limit to ~8-12 stickers
+        if len(final_masks) >= MAX_STICKERS_PER_SHEET:  # limit to ~8-12 stickers
             break
     masks = final_masks
 
@@ -124,20 +111,23 @@ def process_image(image_path, checkpoint_path, model_type):
         output_polygons.append({"sticker_id": f"sticker_{i + 1}", "polygon": polygon})
 
     # Save JSON
-    image_stem = Path(image_path).stem
-    json_path = OUTPUT_DIR / f"{image_stem}_polygons.json"
     with open(json_path, "w") as f:
         json.dump(output_polygons, f, indent=2)
     print(f"Saved {len(output_polygons)} polygons to {json_path}")
 
-    # Save visualization
-    visualize_masks(image_rgb, output_polygons, OUTPUT_DIR / f"{image_stem}_maps.jpg")
-
 
 def process_folder():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for img in INPUT_DIR.glob("*.jpeg"):
-        process_image(img, CHECKPOINT_PATH, MODEL_TYPE)
+    input_path = Path(INPUT_DIR)
+    output_path = Path(OUTPUT_DIR)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    for image_path in input_path.glob("*.jpeg"):
+        out_path = OUTPUT_DIR / f"{image_path.stem}.json"
+        if (
+            not out_path.exists()
+            or out_path.stat().st_mtime < image_path.stat().st_mtime
+        ):
+            process_image(image_path, out_path)
 
 
 # --- Run ---

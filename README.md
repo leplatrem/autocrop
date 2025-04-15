@@ -6,6 +6,7 @@ A set of scripts produced by ChatGPT 4o that will:
 1. Extract the content of areas as PNG
 1. Turn PNG in square JPEG
 
+![Process illustration](image.png)
 
 ## How to run
 
@@ -16,13 +17,24 @@ pip install poetry
 poetry install
 ```
 
-And then run the commands in chain:
+And then run the different commands in chain:
 
 ```
-# rm -rf output/*
-poetry run python image2json.py input/ output/json/
-poetry run python json2png.py input/ output/json/ output/extracted/
-poetry run python png2square.py output/extracted/ output/squares/
+python image2json.py input/ output/json/ && \
+python json2png.py input/ output/json/ output/extracted/ && \
+python png2square.py output/extracted/ output/stickaz/
+```
+
+Or all commands like clean polygons, visualization, etc.
+
+```
+python image2json.py input/ output/json/ && \
+python json2visu.py input/ output/json output/visu-all/ && \
+python jsonclean.py output/json/ output/json-clean/ && \
+python json2visu.py input/ output/json-clean/ output/visu-clean/ && \
+python json2png.py input/ output/json-clean/ output/extracted/ && \
+python autorotate.py output/extracted/ output/rotated/ && \
+python png2square.py output/rotated/ output/stickaz/
 ```
 
 ## Source code
@@ -88,4 +100,11 @@ Also make sure each sticker is surrounded by a semi white area
 
 ```
 grow the polygon by 20 pixels
+```
+
+```
+a python script that will follow the same sturcture as the others and do the following steps:
+- find out average white there is the most in the image
+- apply the same operation as the Color > Levels menu in Gimp when one click on the white selector
+- save the result in the output folder
 ```
